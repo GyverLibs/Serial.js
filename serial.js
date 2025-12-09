@@ -1,7 +1,11 @@
+import { StreamSplitter } from "@alexgyver/utils";
+
 export default class SerialJS {
     //#region handlers
     onbin = null;
     ontext = null;
+    online = null;
+
     async onopen() { }
     async onclose() { }
     async onerror(e) { }
@@ -9,6 +13,9 @@ export default class SerialJS {
 
     //#region constructor
     constructor() {
+        this.splitter = new StreamSplitter();
+        this.splitter.ontext = (t) => this.online(t);
+
         this._ok = 'serial' in navigator;
         if (this._ok) this._update().then(() => this.onportchange(this.selected()));
         else this._error('Browser is not supported');
@@ -18,9 +25,11 @@ export default class SerialJS {
     opened() {
         return this._open;
     }
+
     selected() {
         return !!this._port;
     }
+
     getName() {
         if (!this._port) return 'None';
 
@@ -42,6 +51,7 @@ export default class SerialJS {
             await this.close();
             let ports = await navigator.serial.getPorts();
             for (let p of ports) await p.forget();
+            await new Promise(r => setTimeout(r, 50));
             await navigator.serial.requestPort();
             await this._update();
         } catch (e) {
@@ -50,6 +60,7 @@ export default class SerialJS {
         }
         this.onportchange(this.selected());
     }
+
     async open(baud = 115200) {
         if (!this._ok) return;
 
@@ -61,7 +72,7 @@ export default class SerialJS {
                 await this._port.open({ baudRate: baud });
                 this._open = true;
                 this.onopen();
-                this.reader.reset();
+                // this.reader.reset();
                 await this._readLoop();
             } finally {
                 await this._port.close();
@@ -72,6 +83,7 @@ export default class SerialJS {
             this._error(e);
         }
     }
+
     async close() {
         if (!this._ok) return;
         if (!this._open) return;
@@ -79,7 +91,11 @@ export default class SerialJS {
         this._close = true;
         if (this._reader) await this._reader.cancel();
 
-        while (this._open) await new Promise(r => setTimeout(r, 10));
+        const t0 = performance.now();
+        while (this._open) {
+            if (performance.now() - t0 > 2000) this._error("Close timeout");
+            await new Promise(r => setTimeout(r, 10));
+        }
     }
 
     async sendBin(data) {
@@ -94,11 +110,10 @@ export default class SerialJS {
             this._error(e);
         }
     }
+
     async sendText(text) {
         await this.sendBin((new TextEncoder()).encode(text));
     }
-
-    reader = new SplitReader();
 
     //#region private
     _port = null;
@@ -115,15 +130,21 @@ export default class SerialJS {
     }
     async _readLoop() {
         this._close = false;
-        if (this._port.readable) this._reader = this._port.readable.getReader();
+        const decoder = new TextDecoder();
+
         while (this._port.readable && !this._close) {
+            this._reader = this._port.readable.getReader();
             try {
                 while (true) {
-                    let read = await this._reader.read();
-                    if (read.done) break;
-                    if (this.onbin) this.onbin(read.value);
-                    if (this.ontext) this.ontext(new TextDecoder().decode(read.value));
-                    if (this.reader.ontext) this.reader._write(new TextDecoder().decode(read.value));
+                    const { done, value } = await this._reader.read();
+                    if (done) return;
+
+                    if (this.onbin) this.onbin(value);
+                    if (this.ontext || this.online) {
+                        const text = decoder.decode(value);
+                        if (this.ontext) this.ontext(text);
+                        if (this.online) this.splitter.write(text);
+                    }
                 }
             } finally {
                 this._reader.releaseLock();
@@ -131,34 +152,4 @@ export default class SerialJS {
             }
         }
     }
-}
-
-class SplitReader {
-    ontext = null;
-
-    setEOL(eol) {
-        this._eol = eol;
-        this.reset();
-    }
-
-    reset() {
-        this._buf = "";
-        this._skip = true;
-    }
-
-    _write(str) {
-        this._buf += str;
-        let t = this._buf.split(this._eol);
-        if (t.length == 1) return;
-
-        if (t[t.length - 1].length) this._buf = t.pop();
-        else this._buf = "", t.pop();
-
-        if (this._skip) t.shift(), this._skip = false;
-        t.map(this.ontext);
-    }
-
-    _buf = "";
-    _skip = true;
-    _eol = /\r?\n/;
 }

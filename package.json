@@ -1,20 +1,26 @@
 {
   "name": "@alexgyver/serial",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Web Serial API wrapper",
   "main": "./serial.js",
   "module": "./serial.js",
   "types": "./serial.js",
   "scripts": {
-    "build": "webpack --config ./webpack.config.js"
+    "build": "webpack --config ./webpack.config.js",
+    "dev": "webpack serve --config ./webpack.dev.config.js & webpack --config ./webpack.dev.config.js"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/GyverLibs/Serial.js.git"
   },
   "devDependencies": {
-    "webpack": "^5.98.0",
-    "webpack-cli": "^6.0.1"
+    "webpack": "^5.103.0",
+    "webpack-cli": "^6.0.1",
+    "webpack-dev-server": "^5.2.2",
+    "html-webpack-plugin": "^5.6.5"
+  },
+  "dependencies": {
+    "@alexgyver/utils": "^1.2.2"
   },
   "author": "AlexGyver <alex@alexgyver.ru>",
   "license": "MIT"
