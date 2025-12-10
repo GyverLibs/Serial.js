@@ -1,4 +1,38 @@
 # Serial.js
-Web Serial API wrapper, [demo](https://gyverlibs.github.io/Serial.js/test/).
+Обёртка на Web Serial API
+- Автоматическое переподключение
+- Сохранение последнего выбранного порта
+- Буферизация отправки
+- Буферизация приёма, разделение текста по разделителю
 
 > npm i @alexgyver/serial
+
+## Дока
+```js
+constructor(params = {});
+config(params = {});
+// eol: /\r?\n/
+// baud: 115200
+// reconnect: 1000
+
+onbin(b);
+ontext(t);
+
+onopen():
+onclose():
+onchange(s):
+onselect(name);
+onerror(e);
+
+static supported();
+opened();
+selected();
+getName();
+
+select();
+open();
+close();
+
+sendBin(data);
+sendText(text);
+```

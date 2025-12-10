@@ -1,29 +1,48 @@
-import { StreamSplitter } from "@alexgyver/utils";
+import { sleep, ShiftBuffer, StreamSplitter } from "@alexgyver/utils";
+
+const States = {
+    Open: 1,
+    Closing: 2,
+    Closed: 3,
+};
 
 export default class SerialJS {
     //#region handlers
     onbin = null;
     ontext = null;
-    online = null;
 
-    async onopen() { }
-    async onclose() { }
-    async onerror(e) { }
-    async onportchange(selected) { }
+    onopen() { }
+    onclose() { }
+    onchange(s) { }
+    onselect(name) { }
+    onerror(e) { }
 
     //#region constructor
-    constructor() {
-        this.splitter = new StreamSplitter();
-        this.splitter.ontext = (t) => this.online(t);
+    constructor(params = {}) {
+        const def = {
+            eol: /\r?\n/,
+            baud: 115200,
+            reconnect: 1000,
+        };
+        this.cfg = { ...def, ...params };
 
-        this._ok = 'serial' in navigator;
-        if (this._ok) this._update().then(() => this.onportchange(this.selected()));
-        else this._error('Browser is not supported');
+        this._setLastPort().then(() => this.onselect(this.getName()));
+        this.splitter = new StreamSplitter(this.cfg.eol);
+        this.splitter.ontext = (t) => this.ontext(t);
+    }
+
+    config(params = {}) {
+        this.cfg = { ...this.cfg, ...params };
+        this.splitter.eol = this.cfg.eol;
     }
 
     //#region methods
+    static supported() {
+        return 'serial' in navigator;
+    }
+
     opened() {
-        return this._open;
+        return this._state == States.Open;
     }
 
     selected() {
@@ -31,7 +50,7 @@ export default class SerialJS {
     }
 
     getName() {
-        if (!this._port) return 'None';
+        if (!this._port) return null;
 
         switch (this._port.getInfo().usbProductId) {
             case 0x55d3: return 'CH343';
@@ -45,111 +64,124 @@ export default class SerialJS {
     }
 
     async select() {
-        if (!this._ok) return;
-
         try {
             await this.close();
+            this._port = null;
             let ports = await navigator.serial.getPorts();
             for (let p of ports) await p.forget();
-            await new Promise(r => setTimeout(r, 50));
+            await sleep(50);
             await navigator.serial.requestPort();
-            await this._update();
+            await this._setLastPort();
         } catch (e) {
-            this._port = null;
             this._error(e);
         }
-        this.onportchange(this.selected());
+        this.onselect(this.getName());
+        return this.selected();
     }
 
-    async open(baud = 115200) {
-        if (!this._ok) return;
+    async open() {
+        if (this.cfg.reconnect) this.retry = true;
+        await this._open();
+    }
+    async _open() {
+        if (this.opened()) return;
 
         try {
-            await this.close();
-            await this._update();
-            if (!this.selected()) throw "No port";
-            try {
-                await this._port.open({ baudRate: baud });
-                this._open = true;
-                this.onopen();
-                // this.reader.reset();
-                await this._readLoop();
-            } finally {
-                await this._port.close();
-                this._open = false;
-                this.onclose();
+            await this._close();
+            await this._setLastPort();
+            await this._port.open({ baudRate: this.cfg.baud });
+            this.writer = this._port.writable.getWriter();
+            this.reader = this._port.readable.getReader();
+            this._buffer.clear();
+            this._state = States.Open;
+            this._change(true);
+
+            while (this._state == States.Open) {
+                const { value, done } = await this.reader.read();
+                if (done) break;
+                if (value) {
+                    if (this.onbin) this.onbin(value);
+                    if (this.ontext) this.splitter.write(this._decoder.decode(value, { stream: true }));
+                }
             }
         } catch (e) {
             this._error(e);
+            if (this.retry) setTimeout(() => this._open(), this.cfg.reconnect);
         }
+
+        if (this.reader) this.reader.releaseLock();
+        if (this.writer) this.writer.releaseLock();
+        this.reader = null;
+        this.writer = null;
+        this._state = States.Closed;
+
+        try {
+            await this._port.close();
+            this._change(false);
+        } catch (e) { }
     }
 
     async close() {
-        if (!this._ok) return;
-        if (!this._open) return;
-
-        this._close = true;
-        if (this._reader) await this._reader.cancel();
-
-        const t0 = performance.now();
-        while (this._open) {
-            if (performance.now() - t0 > 2000) this._error("Close timeout");
-            await new Promise(r => setTimeout(r, 10));
-        }
+        this.retry = false;
+        await this._close();
     }
-
-    async sendBin(data) {
-        if (!this._ok) return;
-        if (!this.opened()) return;
-
-        try {
-            let writer = this._port.writable.getWriter();
-            await writer.write(data);
-            writer.releaseLock();
-        } catch (e) {
-            this._error(e);
+    async _close() {
+        switch (this._state) {
+            case States.Closed: return;
+            case States.Open:
+                if (this.reader) await this.reader.cancel();
+                this._state = States.Closing;
+                break;
         }
+
+        let i = 0;
+        while (this._state == States.Closing) {
+            await sleep(10);
+            if (++i > 200) {
+                this._error('Close timeout');
+                this._state = States.Closed;
+                break;
+            }
+        }
+
     }
 
     async sendText(text) {
         await this.sendBin((new TextEncoder()).encode(text));
     }
 
+    async sendBin(data) {
+        this._buffer.push(data);
+        this._send();
+    }
+
     //#region private
     _port = null;
-    _open = false;
-    _close = false;
-    _reader = null;
+    _state = States.Closed;
+    _buffer = new ShiftBuffer();
+    _decoder = new TextDecoder();
+
+    async _send() {
+        if (this._busy) return;
+        this._busy = true;
+        while (this._buffer.length) {
+            let d = this._buffer.shiftAll();
+            try {
+                if (this.writer) await this.writer.write(d);
+            } catch (e) { }
+        }
+        this._busy = false;
+    }
+    async _setLastPort() {
+        let ports = await navigator.serial.getPorts();
+        this._port = ports.length ? ports[0] : null;
+    }
 
     _error(e) {
         this.onerror('[SerialJS] ' + e);
     }
-    async _update() {
-        let ports = await navigator.serial.getPorts();
-        this._port = ports.length ? ports[0] : null;
-    }
-    async _readLoop() {
-        this._close = false;
-        const decoder = new TextDecoder();
-
-        while (this._port.readable && !this._close) {
-            this._reader = this._port.readable.getReader();
-            try {
-                while (true) {
-                    const { done, value } = await this._reader.read();
-                    if (done) return;
-
-                    if (this.onbin) this.onbin(value);
-                    if (this.ontext || this.online) {
-                        const text = decoder.decode(value);
-                        if (this.ontext) this.ontext(text);
-                        if (this.online) this.splitter.write(text);
-                    }
-                }
-            } finally {
-                this._reader.releaseLock();
-                this._reader = null;
-            }
-        }
+    _change(s) {
+        this.onchange(s);
+        s ? this.onopen() : this.onclose();
     }
 }
