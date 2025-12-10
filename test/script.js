@@ -12,18 +12,20 @@ send_b.onclick = () => ser.sendText('Hello ' + i++);
 // read
 // ser.onbin = b => console.log(b);
 ser.ontext = t => console.log(t);
-// ser.online = t => console.log(t);
 
 // state
-ser.onopen = () => {
-    console.log('Opened', ser.getName());
-}
-ser.onclose = () => {
-    console.log('Closed');
+// ser.onopen = () => {
+//     console.log('Opened', ser.getName());
+// }
+// ser.onclose = () => {
+//     console.log('Closed');
+// }
+ser.onchange = s => {
+    console.log(s);
 }
 ser.onerror = e => {
     console.log(e);
 }
 ser.onselect = (port) => {
-    console.log('port change', port);
+    console.log('select', port);
 }

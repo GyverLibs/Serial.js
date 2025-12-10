@@ -1,12 +1,13 @@
 import { sleep, ShiftBuffer, StreamSplitter } from "@alexgyver/utils";
 
-const States = {
-    Open: 1,
-    Closing: 2,
-    Closed: 3,
-};
-
 export default class SerialJS {
+    static State = {
+        Closed: 'closed',
+        Opening: 'opening',
+        Open: 'open',
+        Closing: 'closing',
+    };
+
     //#region handlers
     onbin = null;
     ontext = null;
@@ -31,18 +32,18 @@ export default class SerialJS {
         this.splitter.ontext = (t) => this.ontext(t);
     }
 
+    //#region methods
     config(params = {}) {
         this.cfg = { ...this.cfg, ...params };
         this.splitter.eol = this.cfg.eol;
     }
 
-    //#region methods
     static supported() {
         return 'serial' in navigator;
     }
 
     opened() {
-        return this._state == States.Open;
+        return this._state == SerialJS.State.Open;
     }
 
     selected() {
@@ -85,6 +86,7 @@ export default class SerialJS {
     }
     async _open() {
         if (this.opened()) return;
+        this._change(SerialJS.State.Opening);
 
         try {
             await this._close();
@@ -93,10 +95,9 @@ export default class SerialJS {
             this.writer = this._port.writable.getWriter();
             this.reader = this._port.readable.getReader();
             this._buffer.clear();
-            this._state = States.Open;
-            this._change(true);
+            this._change(SerialJS.State.Open);
 
-            while (this._state == States.Open) {
+            while (this._state == SerialJS.State.Open) {
                 const { value, done } = await this.reader.read();
                 if (done) break;
                 if (value) {
@@ -106,6 +107,7 @@ export default class SerialJS {
             }
         } catch (e) {
             this._error(e);
+            this._change(SerialJS.State.Closed);
             if (this.retry) setTimeout(() => this._open(), this.cfg.reconnect);
         }
 
@@ -113,11 +115,10 @@ export default class SerialJS {
         if (this.writer) this.writer.releaseLock();
         this.reader = null;
         this.writer = null;
-        this._state = States.Closed;
 
         try {
             await this._port.close();
-            this._change(false);
+            this._change(SerialJS.State.Closed);
         } catch (e) { }
     }
 
@@ -127,19 +128,19 @@ export default class SerialJS {
     }
     async _close() {
         switch (this._state) {
-            case States.Closed: return;
-            case States.Open:
+            case SerialJS.State.Closed: return;
+            case SerialJS.State.Open:
                 if (this.reader) await this.reader.cancel();
-                this._state = States.Closing;
+                this._change(SerialJS.State.Closing);
                 break;
         }
 
         let i = 0;
-        while (this._state == States.Closing) {
+        while (this._state == SerialJS.State.Closing) {
             await sleep(10);
             if (++i > 200) {
                 this._error('Close timeout');
-                this._state = States.Closed;
+                this._change(SerialJS.State.Closed);
                 break;
             }
         }
@@ -157,7 +158,7 @@ export default class SerialJS {
 
     //#region private
     _port = null;
-    _state = States.Closed;
+    _state = SerialJS.State.Closed;
     _buffer = new ShiftBuffer();
     _decoder = new TextDecoder();
 
@@ -181,7 +182,11 @@ export default class SerialJS {
         this.onerror('[SerialJS] ' + e);
     }
     _change(s) {
+        this._state = s;
         this.onchange(s);
-        s ? this.onopen() : this.onclose();
+        switch (s) {
+            case SerialJS.State.Open: this.onopen(); break;
+            case SerialJS.State.Closed: this.onclose(); break;
+        }
     }
 }
