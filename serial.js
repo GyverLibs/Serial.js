@@ -23,6 +23,7 @@ export default class SerialJS {
         const def = {
             eol: /\r?\n/,
             baud: 115200,
+            auto_open: false,
             reconnect: 1000,
         };
         this.cfg = { ...def, ...params };
@@ -77,6 +78,7 @@ export default class SerialJS {
             this._error(e);
         }
         this.onselect(this.getName());
+        if (this.cfg.auto_open) this.open();
         return this.selected();
     }
 
@@ -165,10 +167,10 @@ export default class SerialJS {
     async _send() {
         if (this._busy) return;
         this._busy = true;
-        while (this._buffer.length) {
+        while (this._buffer.length && this.writer) {
             let d = this._buffer.shiftAll();
             try {
-                if (this.writer) await this.writer.write(d);
+                await this.writer.write(d);
             } catch (e) { }
         }
         this._busy = false;

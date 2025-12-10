@@ -13,6 +13,7 @@ constructor(params = {});
 config(params = {});
 // eol: /\r?\n/
 // baud: 115200
+// auto_open: false
 // reconnect: 1000
 
 onbin(b);

@@ -1,6 +1,6 @@
 {
   "name": "@alexgyver/serial",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Web Serial API wrapper",
   "main": "./serial.js",
   "module": "./serial.js",
@@ -20,7 +20,7 @@
     "html-webpack-plugin": "^5.6.5"
   },
   "dependencies": {
-    "@alexgyver/utils": "^1.2.3"
+    "@alexgyver/utils": "^1.2.4"
   },
   "author": "AlexGyver <alex@alexgyver.ru>",
   "license": "MIT"
