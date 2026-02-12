@@ -1,4 +1,5 @@
-import SerialJS from "https://gyverlibs.github.io/Serial.js/serial.min.js";
+import SerialJS from 'https://gyverlibs.github.io/Serial.js/Serial.min.js'
+// import SerialJS from "../serial";
 
 let i = 0;
 let ser = new SerialJS();

@@ -5,7 +5,11 @@
 - Буферизация отправки
 - Буферизация приёма, разделение текста по разделителю
 
-> npm i @alexgyver/serial
+[demo](https://gyverlibs.github.io/Serial.js/test/)
+
+> **Browser**: https://gyverlibs.github.io/Serial.js/Serial.min.js
+
+> **Node**: npm i @alexgyver/serial
 
 ## Дока
 ```js
