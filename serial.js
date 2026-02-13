@@ -83,6 +83,9 @@ export default class SerialJS {
     }
 
     async open() {
+        const ports = await navigator.serial.getPorts();
+        if (!ports.length) return;
+        
         if (this.cfg.reconnect) this.retry = true;
         await this._open();
     }

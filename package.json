@@ -1,6 +1,6 @@
 {
   "name": "@alexgyver/serial",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Web Serial API wrapper",
   "main": "./serial.js",
   "module": "./serial.js",
