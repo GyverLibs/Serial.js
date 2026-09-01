@@ -25,10 +25,11 @@ export default class SerialJS {
             baud: 115200,
             auto_open: false,
             reconnect: 1000,
+            forgetOtherPorts: true,
         };
         this.cfg = { ...def, ...params };
 
-        this._setLastPort().then(() => this.onselect(this.getName()));
+        this.restore().then(() => this.onselect(this.getName()));
         this.splitter = new StreamSplitter(this.cfg.eol);
         this.splitter.ontext = (t) => {
             try {
@@ -57,10 +58,14 @@ export default class SerialJS {
         return !!this._port;
     }
 
+    getInfo() {
+        return this._port?.getInfo() ?? null;
+    }
+
     getName() {
         if (!this._port) return 'None';
 
-        switch (this._port.getInfo().usbProductId) {
+        switch (this.getInfo().usbProductId) {
             case 0x55d3: return 'CH343';
             case 0x7584: return 'CH340S';
             case 0x7522: case 0x7523: return 'CH340';
@@ -74,48 +79,87 @@ export default class SerialJS {
     async select() {
         try {
             await this.close();
-            this._port = null;
-            let ports = await navigator.serial.getPorts();
-            for (let p of ports) await p.forget();
-            await sleep(50);
-            await navigator.serial.requestPort();
-            await this._setLastPort();
+            const port = await navigator.serial.requestPort();
+
+            if (this.cfg.forgetOtherPorts) {
+                const ports = await navigator.serial.getPorts();
+                for (const p of ports) {
+                    if (p !== port) await p.forget();
+                }
+            }
+
+            this._port = port;
         } catch (e) {
             this._error(e);
         }
         this.onselect(this.getName());
-        if (this.cfg.auto_open) this.open();
+        if (this.cfg.auto_open) return this.open();
         return this.selected();
     }
 
+    async getPorts() {
+        return navigator.serial.getPorts();
+    }
+
+    async restore() {
+        const ports = await this.getPorts();
+        this._port = this.cfg.forgetOtherPorts
+            ? (ports[0] ?? null)
+            : (ports.length === 1 ? ports[0] : null);
+        return this.selected();
+    }
+
+    async forget() {
+        await this.close();
+        if (!this._port) return false;
+
+        const port = this._port;
+        this._port = null;
+
+        try {
+            await port.forget();
+            this.onselect(this.getName());
+            return true;
+        } catch (e) {
+            this._port = port;
+            this._error(e);
+            return false;
+        }
+    }
+
     async open() {
-        const ports = await navigator.serial.getPorts();
-        if (!ports.length) return false;
+        if (this.opened()) return true;
+        if (this._openPromise) return this._openPromise;
+        if (this._state !== SerialJS.State.Closed) return false;
 
         if (this.cfg.reconnect) this.retry = true;
 
-        this._open();
-        return true;
+        const promise = this._connect();
+        this._openPromise = promise;
+        const result = await promise;
+        if (this._openPromise === promise) this._openPromise = null;
+        return result;
     }
-    async _open() {
-        if (this._state !== SerialJS.State.Closed) return;
-
+    async _connect() {
         this._change(SerialJS.State.Opening);
 
         try {
-            await this._setLastPort();
+            if (!this._port) await this.restore();
 
             if (!this._port) {
                 throw new Error('No port');
             }
 
-            if (this._state === SerialJS.State.Closing) return;
+            if (this._state === SerialJS.State.Closing) {
+                await this._cleanup();
+                return false;
+            }
 
             await this._port.open({ baudRate: this.cfg.baud });
 
             if (this._state === SerialJS.State.Closing) {
-                await this._port.close();
-                return;
+                await this._cleanup();
+                return false;
             }
 
             this.writer = this._port.writable.getWriter();
@@ -123,7 +167,18 @@ export default class SerialJS {
 
             this._sender.reset();
             this._change(SerialJS.State.Open);
+            void this._listen();
+            return true;
+        } catch (e) {
+            this._error(e);
+        }
 
+        await this._cleanup();
+        return false;
+    }
+
+    async _listen() {
+        try {
             while (this._state === SerialJS.State.Open) {
                 const { value, done } = await this.reader.read();
 
@@ -147,6 +202,10 @@ export default class SerialJS {
             this._error(e);
         }
 
+        await this._cleanup();
+    }
+
+    async _cleanup() {
         this._sender.reset();
 
         try {
@@ -168,7 +227,7 @@ export default class SerialJS {
 
         if (this.retry) {
             setTimeout(() => {
-                if (this.retry) this._open();
+                if (this.retry) this.open();
             }, this.cfg.reconnect);
         }
     }
@@ -219,11 +278,16 @@ export default class SerialJS {
     async sendBin(data) {
         if (!this.opened() || !this.writer) return false;
 
-        return this._sender.runNothrow(async () => {
-            if (!this.opened() || !this.writer) return false;
-            await this.writer.write(data);
-            return true;
-        });
+        try {
+            return await this._sender.run(async () => {
+                if (!this.opened() || !this.writer) return false;
+                await this.writer.write(data);
+                return true;
+            });
+        } catch (e) {
+            if (this.opened()) this._error(e);
+            return false;
+        }
     }
 
     //#region private
@@ -231,11 +295,7 @@ export default class SerialJS {
     _decoder = new TextDecoder();
     _sender = new SerialExecutor();
     _state = SerialJS.State.Closed;
-
-    async _setLastPort() {
-        let ports = await navigator.serial.getPorts();
-        this._port = ports.length ? ports[0] : null;
-    }
+    _openPromise = null;
 
     _error(e) {
         this.onerror('[SerialJS] ' + e);
