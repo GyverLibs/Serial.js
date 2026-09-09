@@ -23,6 +23,11 @@ export default class SerialJS {
         const def = {
             eol: /\r?\n/,
             baud: 115200,
+            dataBits: 8,
+            stopBits: 1,
+            parity: 'none',
+            bufferSize: 255,
+            flowControl: 'none',
             auto_open: false,
             reconnect: 1000,
             forgetOtherPorts: true,
@@ -155,7 +160,7 @@ export default class SerialJS {
                 return false;
             }
 
-            await this._port.open({ baudRate: this.cfg.baud });
+            await this._port.open(this._openOptions());
 
             if (this._state === SerialJS.State.Closing) {
                 await this._cleanup();
@@ -296,6 +301,17 @@ export default class SerialJS {
     _sender = new SerialExecutor();
     _state = SerialJS.State.Closed;
     _openPromise = null;
+
+    _openOptions() {
+        return {
+            baudRate: this.cfg.baud,
+            dataBits: this.cfg.dataBits,
+            stopBits: this.cfg.stopBits,
+            parity: this.cfg.parity,
+            bufferSize: this.cfg.bufferSize,
+            flowControl: this.cfg.flowControl,
+        };
+    }
 
     _error(e) {
         this.onerror('[SerialJS] ' + e);

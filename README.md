@@ -18,6 +18,11 @@ constructor(params = {});
 config(params = {});
 // eol: /\r?\n/
 // baud: 115200
+// dataBits: 8
+// stopBits: 1
+// parity: 'none'
+// bufferSize: 255
+// flowControl: 'none'
 // auto_open: false
 // reconnect: 1000
 // forgetOtherPorts: true
@@ -55,3 +60,19 @@ sendText(text);
 - `getPorts()` возвращает все ранее разрешённые порты
 - `restore()` восстанавливает порт без системного диалога, если выбор однозначен
 - `forget()` закрывает текущий порт и отзывает только его разрешение
+
+## Настройки порта
+
+При открытии библиотека передаёт в `SerialPort.open()` параметры `baud`, `dataBits`, `stopBits`, `parity`, `bufferSize` и `flowControl`. Например:
+
+```js
+const serial = new SerialJS({
+    baud: 115200,
+    bufferSize: 4096,
+    flowControl: 'hardware',
+});
+```
+
+`flowControl: 'hardware'` включает RTS/CTS и работает только при поддержке со стороны порта и физического подключения. Значение по умолчанию — `'none'`.
+
+`sendBin()` последовательно выполняет отправки и ожидает Promise от `writer.write()`. Это использует backpressure Web Serial, но не является прикладным подтверждением обработки данных устройством.
