@@ -70,14 +70,59 @@ export default class SerialJS {
     getName() {
         if (!this._port) return 'None';
 
-        switch (this.getInfo().usbProductId) {
-            case 0x55d3: return 'CH343';
-            case 0x7584: return 'CH340S';
-            case 0x7522: case 0x7523: return 'CH340';
-            case 0x5512: case 0x5523: case 0x5584: return 'CH341';
-            case 0x0402: case 0x0403: case 0x0404: case 0x0405: case 0x6001: case 0x0602: case 0x6010: return 'FT232';
-            case 0x9500: case 0x0102: case 0x0501: case 0x80a9: case 0xea60: case 0xea61: case 0xea63: return 'CP210x';
+        const info = this.getInfo();
+
+        if (info.bluetoothServiceClassId !== undefined) {
+            return 'Bluetooth SPP';
         }
+
+        switch (info.usbVendorId) {
+            case 0x1a86: // WCH
+                switch (info.usbProductId) {
+                    case 0x55d2: return 'CH342';
+                    case 0x55d3: return 'CH343';
+                    case 0x55d4: return 'CH9102';
+                    case 0x55d5: return 'CH344';
+                    case 0x55d7: return 'CH9103';
+                    case 0x55da: case 0x55db: case 0x55dd: case 0x55de: return 'CH347';
+                    case 0x7584: return 'CH340S';
+                    case 0x7522: case 0x7523: return 'CH340';
+                    case 0x5512: case 0x5523: case 0x5584: return 'CH341';
+                }
+                break;
+
+            case 0x0403: // FTDI
+                switch (info.usbProductId) {
+                    case 0x6001: case 0x6006: case 0xfbfa: return 'FT232';
+                    case 0x6010: return 'FT2232';
+                    case 0x6011: return 'FT4232H';
+                    case 0x6014: return 'FT232H';
+                    case 0x6015: return 'FT230X/FT231X';
+                    case 0x6040: case 0x6042: return 'FT2232HP';
+                    case 0x6041: case 0x6043: return 'FT4232HP';
+                    case 0x6044: return 'FT233HP';
+                    case 0x6045: return 'FT232HP';
+                }
+                break;
+
+            case 0x10c4: // Silicon Labs
+                switch (info.usbProductId) {
+                    case 0xea60: case 0xea61: case 0xea63: return 'CP210x';
+                    case 0xea70: return 'CP2105';
+                    case 0xea71: return 'CP2108';
+                }
+                break;
+
+            case 0x067b: // Prolific
+                switch (info.usbProductId) {
+                    case 0x2303: case 0x2304:
+                    case 0x23a3: case 0x23b3: case 0x23c3:
+                    case 0x23d3: case 0x23e3: case 0x23f3:
+                        return 'PL2303';
+                }
+                break;
+        }
+
         return 'Unknown';
     }
 
@@ -108,9 +153,13 @@ export default class SerialJS {
 
     async restore() {
         const ports = await this.getPorts();
+
+        if (ports.includes(this._port)) return true;
+
         this._port = this.cfg.forgetOtherPorts
             ? (ports[0] ?? null)
             : (ports.length === 1 ? ports[0] : null);
+
         return this.selected();
     }
 
@@ -133,6 +182,11 @@ export default class SerialJS {
     }
 
     async open() {
+        if (this._retryTimer) {
+            clearTimeout(this._retryTimer);
+            this._retryTimer = null;
+        }
+
         if (this.opened()) return true;
         if (this._openPromise) return this._openPromise;
         if (this._state !== SerialJS.State.Closed) return false;
@@ -141,15 +195,18 @@ export default class SerialJS {
 
         const promise = this._connect();
         this._openPromise = promise;
-        const result = await promise;
-        if (this._openPromise === promise) this._openPromise = null;
+        try {
+            return await promise;
+        } finally {
+            if (this._openPromise === promise) this._openPromise = null;
+        }
         return result;
     }
     async _connect() {
         this._change(SerialJS.State.Opening);
 
         try {
-            if (!this._port) await this.restore();
+            /*if (!this._port)*/ await this.restore();
 
             if (!this._port) {
                 throw new Error('No port');
@@ -230,15 +287,19 @@ export default class SerialJS {
 
         this._change(SerialJS.State.Closed);
 
-        if (this.retry) {
-            setTimeout(() => {
-                if (this.retry) this.open();
+        if (this.retry && this.cfg.reconnect && !this._retryTimer) {
+            this._retryTimer = setTimeout(() => {
+                this._retryTimer = null;
+                if (this.retry) void this.open();
             }, this.cfg.reconnect);
         }
     }
 
     async close() {
         this.retry = false;
+        clearTimeout(this._retryTimer);
+        this._retryTimer = null;
+
         this._sender.reset();
         await this._close();
         return true;
@@ -300,6 +361,7 @@ export default class SerialJS {
     _decoder = new TextDecoder();
     _sender = new SerialExecutor();
     _state = SerialJS.State.Closed;
+    _retryTimer = null;
     _openPromise = null;
 
     _openOptions() {
